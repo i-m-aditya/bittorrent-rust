@@ -29,9 +29,9 @@ fn main() {
         eprintln!("Logs from your program will appear here!");
 
         // Uncomment this block to pass the first stage
-        // let encoded_value = &args[2];
-        // let decoded_value = decode_bencoded_value(encoded_value);
-        // println!("{}", decoded_value.to_string());
+        let encoded_value = &args[2];
+        let decoded_value = decode_bencoded_value(encoded_value);
+        println!("{}", decoded_value.to_string());
     } else {
         println!("unknown command: {}", args[1])
     }
