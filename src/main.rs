@@ -3,7 +3,7 @@
 use anyhow::Error;
 use clap::{Parser, Subcommand};
 
-use std::{env, net::SocketAddrV4, path::Path, str::FromStr};
+use std::{cmp::min, env, net::SocketAddrV4, path::Path, str::FromStr};
 
 use tcp::{Connection, PeerMessage};
 mod tcp;
@@ -244,23 +244,71 @@ async fn main() -> Result<(), Error> {
             let piece_index = piece;
             let piece_length = torrent_file.info.piece_length;
 
-            let block_cnt = piece_length / CHUNKSIZE + ((piece_length % CHUNKSIZE != 0) as u64);
-            let mut piece: Vec<u8> = vec![0; piece_length as usize];
-            for i in 0..block_cnt {
-                // println!("Index: {}", i);
-                let length = if i == block_cnt - 1 {
-                    piece_length - (i * CHUNKSIZE)
-                } else {
-                    CHUNKSIZE
-                };
-                // println!("Requesting block {} of length {}", i * CHUNKSIZE, length);
-                connection.send_request(piece_index as u32, (i * CHUNKSIZE) as u32, length as u32);
+            println!(
+                "Piece index: {} ; Piece length: {}",
+                piece_index, piece_length
+            );
+
+            // let block_cnt = piece_length / CHUNKSIZE + ((piece_length % CHUNKSIZE != 0) as u64);
+
+            // let mut piece: Vec<u8> = vec![0; piece_length as usize];
+            // for i in 0..block_cnt {
+            //     // println!("Index: {}", i);
+            //     let length = if i == block_cnt - 1 {
+            //         piece_length % CHUNKSIZE
+            //     } else {
+            //         CHUNKSIZE
+            //     };
+            //     // println!("Requesting block {} of length {}", i * CHUNKSIZE, length);
+            //     connection.send_request(piece_index as u32, (i * CHUNKSIZE) as u32, length as u32);
+
+            //     let payload = connection.wait(PeerMessage::Piece);
+
+            //     piece[(i * CHUNKSIZE) as usize..piece_length as usize]
+            //         .copy_from_slice(&payload[8..])
+            // }
+
+            let piece_index = piece;
+            let total_length = torrent_file.info.length;
+            let standard_piece_length = torrent_file.info.piece_length;
+
+            // Calculate the actual length of this specific piece
+            let piece_length = {
+                let start_byte = piece_index as u64 * standard_piece_length;
+                let end_byte = std::cmp::min(start_byte + standard_piece_length, total_length);
+                end_byte - start_byte
+            };
+            let mut i = 0;
+            let mut piece = Vec::new();
+            let mut actual_length = 0;
+            while i < piece_length {
+                let block_length = min(CHUNKSIZE, piece_length - i);
+                println!(
+                    "Requesting block {} of block_length {}, piece_length {}",
+                    i, block_length, piece_length
+                );
+                connection.send_request(piece_index as u32, i as u32, block_length as u32);
 
                 let payload = connection.wait(PeerMessage::Piece);
+                // Verify we got the right piece and offset
+                let received_index =
+                    u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                let received_begin =
+                    u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
 
-                piece[(i * CHUNKSIZE) as usize..(i * CHUNKSIZE + length) as usize]
-                    .copy_from_slice(&payload[8..])
+                if received_index != piece_index as u32 || received_begin != i as u32 {
+                    panic!("Received wrong piece data: expected piece {}, offset {}, got piece {}, offset {}", 
+               piece_index, i, received_index, received_begin);
+                }
+
+                actual_length += payload.len() - 8;
+                piece.extend_from_slice(&payload[8..]);
+
+                i += block_length;
             }
+
+            println!("Actual length: {}", actual_length);
+            println!("Expected length: {}", piece_length);
 
             // let hashed = hash_bytes(&piece);
 

@@ -47,7 +47,7 @@ impl Connection {
     }
 
     pub fn wait(&mut self, id: PeerMessage) -> Vec<u8> {
-        // println!("Peer Message: {:?}", id);
+        println!("Peer Message: {:?}", id);
         let mut length_buf = [0; 4];
         self.stream
             .read_exact(&mut length_buf)
