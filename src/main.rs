@@ -3,7 +3,7 @@
 use anyhow::Error;
 use clap::{Parser, Subcommand};
 
-use std::{env, net::SocketAddrV4, path::Path};
+use std::{env, net::SocketAddrV4, path::Path, str::FromStr};
 
 use tcp::{Connection, PeerMessage};
 mod tcp;
@@ -23,23 +23,19 @@ const CHUNKSIZE: u64 = 16 * 1024;
 
 fn find_e_for_index(s: &str, index: usize) -> usize {
     let mut count = 1;
-    let mut i = index + 1;
 
-    while i < s.len() {
-        if s.chars().nth(i as usize).unwrap() == 'e' {
+    let chars = s.char_indices().skip(index + 1);
+
+    for (i, ch) in chars {
+        if ch == 'e' {
             count -= 1;
-        } else if s.chars().nth(i as usize).unwrap() == 'l'
-            || s.chars().nth(i as usize).unwrap() == 'd'
-            || s.chars().nth(i as usize).unwrap() == 'i'
-        {
+        } else if ['l', 'd', 'i'].contains(&ch) {
             count += 1;
         }
 
         if count == 0 {
             return i;
         }
-
-        i += 1;
     }
 
     return 0;
