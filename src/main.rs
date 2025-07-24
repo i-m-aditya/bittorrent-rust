@@ -227,11 +227,11 @@ async fn main() -> Result<(), Error> {
 
             let peers = torrent_file.discover_peers().await?;
 
-            let peer1 = format!("{}:{}", peers[0].0, peers[0].1);
+            let remote_peer = format!("{}:{}", peers[0].0, peers[0].1);
 
             // println!("Peer1 : {}", peer1);
             let infohash = hash_bytes(&serde_bencode::to_bytes(&torrent_file.info)?);
-            let mut connection = Connection::new(&peer1);
+            let mut connection = Connection::new(&remote_peer);
 
             let _ = connection.handshake(&infohash.to_vec());
 
