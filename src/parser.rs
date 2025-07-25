@@ -20,10 +20,10 @@ pub struct TorrentFile {
 }
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct TorrentInfo {
-    pub length: u64,
+    pub length: u32,
     pub name: String,
     #[serde(rename = "piece length")]
-    pub piece_length: u64,
+    pub piece_length: u32,
     #[serde(with = "serde_bytes")]
     pub pieces: Vec<u8>,
 }

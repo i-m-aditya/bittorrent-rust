@@ -3,7 +3,7 @@
 use anyhow::Error;
 use clap::{Parser, Subcommand};
 
-use std::{cmp::min, env, net::SocketAddrV4, path::Path, str::FromStr};
+use std::{cmp::min, env, fs, net::SocketAddrV4, path::Path, str::FromStr};
 
 use tcp::{Connection, PeerMessage};
 mod tcp;
@@ -19,7 +19,7 @@ use serde_bencode;
 
 use hasher::{bytes_to_hex, hash_bytes};
 
-const CHUNKSIZE: u64 = 16 * 1024;
+const CHUNKSIZE: u32 = 16 * 1024;
 
 fn find_e_for_index(s: &str, index: usize) -> usize {
     let mut count = 1;
@@ -80,6 +80,13 @@ enum Commands {
         file_path: String,
 
         piece: usize,
+    },
+
+    Download {
+        #[arg(short)]
+        output: String,
+
+        file_path: String,
     },
 }
 
@@ -215,11 +222,10 @@ async fn main() -> Result<(), Error> {
             println!("Peer ID: {}", peer_id);
         }
         Commands::DownloadPiece {
-            address,
             output,
-            debug,
             file_path,
             piece,
+            ..
         } => {
             // println!("Download Piece Args: {:?}", download_piece_args);
 
@@ -249,38 +255,18 @@ async fn main() -> Result<(), Error> {
                 piece_index, piece_length
             );
 
-            // let block_cnt = piece_length / CHUNKSIZE + ((piece_length % CHUNKSIZE != 0) as u64);
-
-            // let mut piece: Vec<u8> = vec![0; piece_length as usize];
-            // for i in 0..block_cnt {
-            //     // println!("Index: {}", i);
-            //     let length = if i == block_cnt - 1 {
-            //         piece_length % CHUNKSIZE
-            //     } else {
-            //         CHUNKSIZE
-            //     };
-            //     // println!("Requesting block {} of length {}", i * CHUNKSIZE, length);
-            //     connection.send_request(piece_index as u32, (i * CHUNKSIZE) as u32, length as u32);
-
-            //     let payload = connection.wait(PeerMessage::Piece);
-
-            //     piece[(i * CHUNKSIZE) as usize..piece_length as usize]
-            //         .copy_from_slice(&payload[8..])
-            // }
-
             let piece_index = piece;
             let total_length = torrent_file.info.length;
             let standard_piece_length = torrent_file.info.piece_length;
 
             // Calculate the actual length of this specific piece
             let piece_length = {
-                let start_byte = piece_index as u64 * standard_piece_length;
+                let start_byte = piece_index as u32 * standard_piece_length;
                 let end_byte = std::cmp::min(start_byte + standard_piece_length, total_length);
                 end_byte - start_byte
             };
             let mut i = 0;
             let mut piece = Vec::new();
-            let mut actual_length = 0;
             while i < piece_length {
                 let block_length = min(CHUNKSIZE, piece_length - i);
                 println!(
@@ -301,25 +287,84 @@ async fn main() -> Result<(), Error> {
                piece_index, i, received_index, received_begin);
                 }
 
-                actual_length += payload.len() - 8;
                 piece.extend_from_slice(&payload[8..]);
 
                 i += block_length;
             }
 
-            println!("Actual length: {}", actual_length);
-            println!("Expected length: {}", piece_length);
-
-            // let hashed = hash_bytes(&piece);
-
-            // println!("Hashed:  {:?}", hashed);
-            // let piece_hash: Vec<u8> = torrent_file.info.pieces.into_iter().take(20).collect();
-
             let output_path = output.unwrap_or_else(|| panic!("No output path provided!"));
             std::fs::write(env::current_dir()?.join(Path::new(&output_path)), piece)?;
             println!("Piece {} downloaded to {}.", piece_index, &output_path)
         }
+
+        Commands::Download { output, file_path } => {
+            let torrent_file = TorrentFile::parse_file_from_path(&file_path)?;
+
+            let peers = torrent_file.discover_peers().await?;
+
+            let remote_peer = format!("{}:{}", peers[0].0, peers[0].1);
+
+            // println!("Peer1 : {}", peer1);
+            let infohash = hash_bytes(&serde_bencode::to_bytes(&torrent_file.info)?);
+            let mut connection = Connection::new(&remote_peer);
+
+            let _ = connection.handshake(&infohash.to_vec());
+
+            // println!("Peer Id: {}", peer_id);
+
+            connection.wait(PeerMessage::Bitfield);
+            connection.send_interested();
+            connection.wait(PeerMessage::Unchoke);
+
+            let total_length = torrent_file.info.length;
+            let standard_piece_length = torrent_file.info.piece_length;
+            let mut file_data = Vec::new();
+
+            let mut piece_offset = 0;
+            let mut piece_index = 0;
+            while piece_offset < total_length {
+                let piece_length = min(total_length - piece_offset, standard_piece_length);
+                println!(
+                    "Piece_index: {}, piece_offset: {}, piece_length:{}",
+                    piece_index, piece_offset, piece_length
+                );
+                let piece_data = download_piece(&mut connection, piece_index, piece_length);
+                file_data.extend(piece_data);
+
+                piece_offset += standard_piece_length;
+                piece_index += 1;
+            }
+            fs::write(output, file_data).expect("Failed to write file data");
+        }
     }
 
     Ok(())
+}
+
+fn download_piece(connection: &mut Connection, piece_index: u32, piece_length: u32) -> Vec<u8> {
+    let mut i = 0;
+    let mut piece_data_in_bytes = Vec::new();
+    while i < piece_length {
+        let block_length = min(CHUNKSIZE, piece_length - i);
+
+        connection.send_request(piece_index as u32, i as u32, block_length as u32);
+
+        let payload = connection.wait(PeerMessage::Piece);
+        // Verify we got the right piece and offset
+        let received_index = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+        let received_begin = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
+
+        if received_index != piece_index as u32 || received_begin != i as u32 {
+            panic!(
+                "Received wrong piece data: expected piece {}, offset {}, got piece {}, offset {}",
+                piece_index, i, received_index, received_begin
+            );
+        }
+
+        piece_data_in_bytes.extend_from_slice(&payload[8..]);
+
+        i += block_length;
+    }
+
+    piece_data_in_bytes
 }
