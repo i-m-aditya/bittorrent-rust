@@ -36,10 +36,10 @@ impl Connection {
         message.extend(infohash);
         message.extend(b"00112233445566778899");
 
-        self.stream.write(&message).await;
+        self.stream.write(&message).await.unwrap();
 
         let mut response = vec![0; message.len()];
-        self.stream.read(&mut response).await;
+        self.stream.read(&mut response).await.unwrap();
 
         let response_peer_id = &response[response.len() - 20..];
         // println!("Peer ID: {}", bytes_to_hex(response_peer_id));
@@ -49,7 +49,7 @@ impl Connection {
     pub async fn wait(&mut self, id: PeerMessage) -> Vec<u8> {
         // println!("Peer Message: {:?}", id);
         let mut length_buf = [0; 4];
-        self.stream.read_exact(&mut length_buf).await;
+        self.stream.read_exact(&mut length_buf).await.unwrap();
 
         let mut msg_type = [0; 1];
         self.stream

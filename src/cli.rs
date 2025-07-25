@@ -158,17 +158,20 @@ impl Cli {
                     end_byte - start_byte
                 };
 
-                // FIXME: Fix this
-                // let piece_data =
-                //     download_piece_async(&mut connection, piece_index as u32, piece_length);
+                let piece_data = download_piece_async(
+                    peers[0],
+                    Arc::new(infohash),
+                    piece_index as u32,
+                    piece_length,
+                )
+                .await;
 
-                // let output_path = output.unwrap_or_else(|| panic!("No output path provided!"));
-                // fs::write(
-                //     env::current_dir()?.join(Path::new(&output_path)),
-                //     piece_data,
-                // )
-                // .await?;
-                // println!("Piece {} downloaded to {}.", piece_index, &output_path)
+                fs::write(
+                    env::current_dir()?.join(output.clone().unwrap()),
+                    piece_data,
+                )
+                .await?;
+                println!("Piece {} downloaded to {}.", piece_index, output.unwrap());
             }
 
             Commands::Download { output, file_path } => {
@@ -265,7 +268,9 @@ async fn download_piece_async(
     while i < piece_length {
         let block_length = min(CHUNKSIZE, piece_length - i);
 
-        connection.send_request(piece_index as u32, i as u32, block_length as u32);
+        connection
+            .send_request(piece_index as u32, i as u32, block_length as u32)
+            .await;
 
         let payload = connection.wait(PeerMessage::Piece).await;
         // Verify we got the right piece and offset
