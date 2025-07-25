@@ -219,7 +219,13 @@ impl Cli {
                     .split('&')
                     .collect::<Vec<_>>();
 
-                let info_hash = split_values[0].split("=").nth(1).unwrap();
+                let info_hash = split_values[0]
+                    .split("=")
+                    .nth(1)
+                    .unwrap()
+                    .split(":")
+                    .nth(2)
+                    .unwrap();
                 let _file_name = split_values[1].split("=").nth(1).unwrap();
                 let tracker = split_values[2].split("=").nth(1).unwrap();
 
