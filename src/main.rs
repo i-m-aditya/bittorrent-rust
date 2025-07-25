@@ -325,8 +325,8 @@ async fn main() -> Result<(), Error> {
             while piece_offset < total_length {
                 let piece_length = min(total_length - piece_offset, standard_piece_length);
                 println!(
-                    "Piece_index: {}, piece_offset: {}, piece_length:{}",
-                    piece_index, piece_offset, piece_length
+                    "Piece_index: {}, piece_offset: {}, piece_length:{}, total_length: {}",
+                    piece_index, piece_offset, piece_length, total_length
                 );
                 let piece_data = download_piece(&mut connection, piece_index, piece_length);
                 file_data.extend(piece_data);
