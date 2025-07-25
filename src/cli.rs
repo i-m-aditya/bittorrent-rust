@@ -253,10 +253,15 @@ async fn download_piece_async(
 ) -> Vec<u8> {
     let remote_peer = format!("{}:{}", peer.0, peer.1);
     let mut connection = Connection::new(&remote_peer).await;
+    println!("Connected to peer: {}", remote_peer);
     connection.handshake(&infohash.to_vec()).await;
+    println!("Handshake completed");
     connection.wait(PeerMessage::Bitfield).await;
+    println!("Bitfield received");
     connection.send_interested().await;
+    println!("Interested sent");
     connection.wait(PeerMessage::Unchoke).await;
+    println!("Unchoke received");
 
     let mut i = 0;
     let mut piece_data_in_bytes = Vec::new();
