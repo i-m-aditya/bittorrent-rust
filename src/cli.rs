@@ -26,7 +26,7 @@ pub struct Cli {
 #[derive(Subcommand, Debug, Clone)]
 enum Commands {
     Decode {
-        string: String,
+        value: String,
     },
 
     Info {
@@ -64,12 +64,17 @@ enum Commands {
 
         file_path: String,
     },
+
+    #[command(name = "magnet_parse")]
+    MagnetParse {
+        magnet_link: String,
+    },
 }
 
 impl Cli {
     pub async fn execute(self) -> anyhow::Result<()> {
         match self.command {
-            Commands::Decode { string } => {
+            Commands::Decode { value: string } => {
                 let (decoded_value, _) = decode_bencoded_value(&string, 0);
                 println!("{}", decoded_value.to_string());
             }
@@ -202,43 +207,27 @@ impl Cli {
                 }
 
                 fs::write(env::current_dir()?.join(output), pieces.concat()).await?;
-                // println!("Downloaded file to {}.", output);
+            }
+            Commands::MagnetParse { magnet_link } => {
+                // magnet:?xt=urn:btih:ad42ce8109f54c99613ce38f9b4d87e70f24a165&dn=magnet1.gif&tr=http%3A%2F%2Fbittorrent-test-tracker.codecrafters.io%2Fannounce
+                //magnet:?xt={info_hash}&dn={file_name}&tr={tracker_url}
 
-                // let remote_peer = format!("{}:{}", peers[0].0, peers[0].1);
+                let split_values = magnet_link
+                    .split('?')
+                    .nth(1)
+                    .unwrap()
+                    .split('&')
+                    .collect::<Vec<_>>();
 
-                // println!("Peer1 : {}", peer1);
-                // let mut connection = Connection::new(&remote_peer);
+                let info_hash = split_values[0].split("=").nth(1).unwrap();
+                let _file_name = split_values[1].split("=").nth(1).unwrap();
+                let tracker = split_values[2].split("=").nth(1).unwrap();
 
-                // let _ = connection.handshake(&infohash.to_vec());
+                let tracker_decoded = urlencoding::decode(tracker).unwrap();
 
-                // // println!("Peer Id: {}", peer_id);
-
-                // connection.wait(PeerMessage::Bitfield);
-                // connection.send_interested();
-                // connection.wait(PeerMessage::Unchoke);
-
-                // let total_length = torrent_file.info.length;
-                // let standard_piece_length = torrent_file.info.piece_length;
-                // let mut file_data = Vec::new();
-
-                // let mut piece_offset = 0;
-                // let mut piece_index = 0;
-                // while piece_offset < total_length {
-                //     let piece_length = min(total_length - piece_offset, standard_piece_length);
-                //     println!(
-                //         "Piece_index: {}, piece_offset: {}, piece_length:{}, total_length: {}",
-                //         piece_index, piece_offset, piece_length, total_length
-                //     );
-                //     let piece_data =
-                //         download_piece_async(remote_peer, infohash, piece_index, piece_length);
-                //     file_data.extend(piece_data);
-
-                //     piece_offset += standard_piece_length;
-                //     piece_index += 1;
-                // }
-                // fs::write(output, file_data)
-                //     .await
-                //     .expect("Fail to write in file");
+                // let (value, _) = decode_bencoded_value(tracker, 0);
+                println!("Tracker URL: {}", tracker_decoded);
+                println!("Info Hash: {}", info_hash);
             }
         }
 
