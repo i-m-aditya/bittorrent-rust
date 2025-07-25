@@ -1,5 +1,5 @@
-use std::{
-    io::{Read, Write},
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
 
@@ -23,12 +23,12 @@ pub enum PeerMessage {
     Cancel,
 }
 impl Connection {
-    pub fn new(address: &String) -> Self {
-        let stream = TcpStream::connect(address).expect("Connection Failed");
+    pub async fn new(address: &String) -> Self {
+        let stream = TcpStream::connect(address).await.unwrap();
         Connection { stream }
     }
 
-    pub fn handshake(&mut self, infohash: &Vec<u8>) -> String {
+    pub async fn handshake(&mut self, infohash: &Vec<u8>) -> String {
         // Construct a message
         let mut message = vec![19];
         message.extend(b"BitTorrent protocol"); // 19 bytes
@@ -36,26 +36,25 @@ impl Connection {
         message.extend(infohash);
         message.extend(b"00112233445566778899");
 
-        let _ = self.stream.write(&message);
+        self.stream.write(&message).await;
 
         let mut response = vec![0; message.len()];
-        let _ = self.stream.read(&mut response);
+        self.stream.read(&mut response).await;
 
         let response_peer_id = &response[response.len() - 20..];
         // println!("Peer ID: {}", bytes_to_hex(response_peer_id));
         return bytes_to_hex(response_peer_id);
     }
 
-    pub fn wait(&mut self, id: PeerMessage) -> Vec<u8> {
+    pub async fn wait(&mut self, id: PeerMessage) -> Vec<u8> {
         // println!("Peer Message: {:?}", id);
         let mut length_buf = [0; 4];
-        self.stream
-            .read_exact(&mut length_buf)
-            .expect("Failed to read length message");
+        self.stream.read_exact(&mut length_buf).await;
 
         let mut msg_type = [0; 1];
         self.stream
             .read_exact(&mut msg_type)
+            .await
             .expect("Failed to read mssage id");
         if msg_type[0] != id.clone() as u8 {
             panic!("Expected msg id {}, got {}", id as u8, msg_type[0]);
@@ -65,24 +64,25 @@ impl Connection {
         let mut payload = vec![0; payload_size as usize];
         self.stream
             .read_exact(&mut payload)
+            .await
             .expect("Failed to read payload");
         return payload;
     }
 
-    pub fn send_interested(&mut self) {
-        self.send_message(PeerMessage::Interested, vec![]);
+    pub async fn send_interested(&mut self) {
+        self.send_message(PeerMessage::Interested, vec![]).await;
     }
 
-    pub fn send_request(&mut self, piece_index: u32, begin: u32, length: u32) {
+    pub async fn send_request(&mut self, piece_index: u32, begin: u32, length: u32) {
         let mut payload = vec![0; 12];
 
         payload[0..4].copy_from_slice(&piece_index.to_be_bytes());
         payload[4..8].copy_from_slice(&begin.to_be_bytes());
         payload[8..12].copy_from_slice(&length.to_be_bytes());
-        self.send_message(PeerMessage::Request, payload);
+        self.send_message(PeerMessage::Request, payload).await;
     }
 
-    pub fn send_message(&mut self, id: PeerMessage, payload: Vec<u8>) {
+    pub async fn send_message(&mut self, id: PeerMessage, payload: Vec<u8>) {
         let mut msg = vec![0; 5 + payload.len()];
         let mut length = payload.len() as u32;
         if length == 0 {
@@ -93,6 +93,6 @@ impl Connection {
         msg[4] = id as u8;
         msg[5..].copy_from_slice(&payload);
 
-        self.stream.write_all(&msg).unwrap();
+        self.stream.write_all(&msg).await.unwrap();
     }
 }

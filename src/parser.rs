@@ -1,4 +1,4 @@
-use std::{env::current_dir, fs::File, io::Read, net::Ipv4Addr};
+use std::{cmp::min, env::current_dir, fs::File, io::Read, net::Ipv4Addr};
 
 use anyhow::{anyhow, Error, Ok, Result};
 use reqwest::Client;
@@ -71,6 +71,25 @@ impl TorrentFile {
             peers.push((Ipv4Addr::from(ip), port));
         }
         Ok(peers)
+    }
+
+    pub fn piece_and_length(&self) -> Vec<(u32, u32)> {
+        let total_length = self.info.length;
+        let mut piece_index_and_length = Vec::new();
+
+        let mut piece_offset = 0;
+        let mut piece_length;
+        let mut piece_index = 0;
+        let standard_piece_length = self.info.piece_length;
+        while piece_offset < total_length {
+            piece_length = min(total_length - piece_offset, standard_piece_length);
+
+            piece_index_and_length.push((piece_index, piece_length));
+            piece_offset += standard_piece_length;
+            piece_index += 1;
+        }
+
+        piece_index_and_length
     }
 }
 
