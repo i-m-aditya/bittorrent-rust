@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 
 use std::{cmp::min, env, fs, net::SocketAddrV4, path::Path, str::FromStr};
 
-use tcp::{Connection, PeerMessage};
+use tcp::{PeerConnection, PeerMessage};
 mod tcp;
 mod util;
 

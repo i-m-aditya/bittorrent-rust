@@ -1,22 +1,43 @@
 use std::{
     cmp::min,
+    collections::HashMap,
     env,
+    fmt::format,
     net::{Ipv4Addr, SocketAddrV4},
     path::Path,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use clap::{Parser, Subcommand};
-use tokio::{fs, sync::Semaphore, task::JoinSet};
+use tokio::{
+    fs,
+    sync::{mpsc, Semaphore},
+    task::JoinSet,
+};
 
 use crate::{
     hasher::{bytes_to_hex, hash_bytes, hash_bytes_and_hex},
     parser::TorrentFile,
-    tcp::{Connection, PeerMessage},
+    tcp::{PeerConnection, PeerManager, PeerMessage},
     util::decode_bencoded_value,
     CHUNKSIZE,
 };
 
+#[derive(Debug)]
+struct Peer {
+    peer_id: (Ipv4Addr, u16),
+}
+
+impl Peer {
+    pub fn get_formatted_peer_id(&self) -> String {
+        format!("{}:{}", self.peer_id.0, self.peer_id.1)
+    }
+}
+
+#[derive(Debug)]
+pub enum PeerRequest {
+    DowloadPiece { piece_index: u32, piece_length: u32 },
+}
 #[derive(Parser, Debug)]
 pub struct Cli {
     #[command(subcommand)]
@@ -44,31 +65,27 @@ enum Commands {
 
     #[command(name = "download_piece")]
     DownloadPiece {
-        #[arg(short, long)]
-        address: Option<SocketAddrV4>,
-
-        #[arg(short, long, help = "File path")]
-        output: Option<String>,
-
-        #[arg(short, long, help = "Debug mode")]
-        debug: Option<bool>,
-
-        file_path: String,
-
-        piece: usize,
+        #[command(flatten)]
+        metadata: DownloadMetadata,
     },
 
     Download {
-        #[arg(short)]
-        output: String,
-
-        file_path: String,
+        #[command(flatten)]
+        metadata: DownloadMetadata,
     },
 
     #[command(name = "magnet_parse")]
     MagnetParse {
         magnet_link: String,
     },
+}
+
+#[derive(Debug, Parser, Clone)]
+struct DownloadMetadata {
+    #[arg(short)]
+    output: String,
+    file_path: String,
+    piece: Option<u32>,
 }
 
 impl Cli {
@@ -113,100 +130,144 @@ impl Cli {
                 let torrent_file = TorrentFile::parse_file_from_path(&path)?;
                 let infohash = hash_bytes(&serde_bencode::to_bytes(&torrent_file.info)?);
 
-                let mut connection = Connection::new(&url).await;
-                let peer_id = connection.handshake(&infohash.to_vec()).await;
+                let (temp_tx, _) = tokio::sync::mpsc::channel(1000);
+                let mut connection = PeerConnection::new(url, temp_tx).await;
+                let peer_id = connection.handshake(Arc::new(infohash)).await;
 
                 println!("Peer ID: {}", peer_id);
             }
-            Commands::DownloadPiece {
-                output,
-                file_path,
-                piece,
-                ..
-            } => {
-                // println!("Download Piece Args: {:?}", download_piece_args);
+            // Commands::DownloadPiece {
+            //     output,
+            //     file_path,
+            //     piece,
+            //     ..
+            // } => {
+            //     // println!("Download Piece Args: {:?}", download_piece_args);
+
+            //     let torrent_file = TorrentFile::parse_file_from_path(&file_path)?;
+
+            //     let peers = torrent_file.discover_peers().await?;
+
+            //     let remote_peer = format!("{}:{}", peers[0].0, peers[0].1);
+
+            //     // println!("Peer1 : {}", peer1);
+            //     let infohash = Arc::new(hash_bytes(&serde_bencode::to_bytes(&torrent_file.info)?));
+            //     let (temp_tx, temp_rx) = tokio::sync::mpsc::unbounded_channel();
+            //     let mut connection = PeerConnection::new(remote_peer, temp_tx).await;
+
+            //     let _ = connection.handshake(infohash.clone()).await;
+
+            //     connection.wait(PeerMessage::Bitfield).await;
+            //     connection.send_interested().await;
+            //     connection.wait(PeerMessage::Unchoke).await;
+
+            //     let piece_index = piece;
+            //     let piece_length = torrent_file.info.piece_length;
+
+            //     println!(
+            //         "Piece index: {} ; Piece length: {}",
+            //         piece_index, piece_length
+            //     );
+
+            //     let piece_index = piece;
+            //     let total_length = torrent_file.info.length;
+            //     let standard_piece_length = torrent_file.info.piece_length;
+
+            //     // Calculate the actual length of this specific piece
+            //     let piece_length = {
+            //         let start_byte = piece_index as u32 * standard_piece_length;
+            //         let end_byte = std::cmp::min(start_byte + standard_piece_length, total_length);
+            //         end_byte - start_byte
+            //     };
+
+            //     let piece_data = connection
+            //         .download_and_respond_piece(piece_index as u32, piece_length)
+            //         .await;
+
+            //     fs::write(
+            //         env::current_dir()?.join(output.clone().unwrap()),
+            //         piece_data,
+            //     )
+            //     .await?;
+            //     println!("Piece {} downloaded to {}.", piece_index, output.unwrap());
+            // }
+            Commands::Download { metadata } | Commands::DownloadPiece { metadata } => {
+                let DownloadMetadata {
+                    output,
+                    file_path,
+                    piece,
+                } = metadata;
 
                 let torrent_file = TorrentFile::parse_file_from_path(&file_path)?;
 
                 let peers = torrent_file.discover_peers().await?;
 
-                let remote_peer = format!("{}:{}", peers[0].0, peers[0].1);
-
-                // println!("Peer1 : {}", peer1);
-                let infohash = hash_bytes(&serde_bencode::to_bytes(&torrent_file.info)?);
-                let mut connection = Connection::new(&remote_peer).await;
-
-                let _ = connection.handshake(&infohash.to_vec()).await;
-
-                // println!("Peer Id: {}", peer_id);
-
-                connection.wait(PeerMessage::Bitfield).await;
-                connection.send_interested().await;
-                connection.wait(PeerMessage::Unchoke).await;
-
-                let piece_index = piece;
-                let piece_length = torrent_file.info.piece_length;
-
-                println!(
-                    "Piece index: {} ; Piece length: {}",
-                    piece_index, piece_length
-                );
-
-                let piece_index = piece;
-                let total_length = torrent_file.info.length;
-                let standard_piece_length = torrent_file.info.piece_length;
-
-                // Calculate the actual length of this specific piece
-                let piece_length = {
-                    let start_byte = piece_index as u32 * standard_piece_length;
-                    let end_byte = std::cmp::min(start_byte + standard_piece_length, total_length);
-                    end_byte - start_byte
+                let peers = if piece.is_some() {
+                    vec![peers[0]]
+                } else {
+                    peers
                 };
 
-                let piece_data = download_piece_async(
-                    peers[0],
-                    Arc::new(infohash),
-                    piece_index as u32,
-                    piece_length,
-                )
-                .await;
-
-                fs::write(
-                    env::current_dir()?.join(output.clone().unwrap()),
-                    piece_data,
-                )
-                .await?;
-                println!("Piece {} downloaded to {}.", piece_index, output.unwrap());
-            }
-
-            Commands::Download { output, file_path } => {
-                let torrent_file = TorrentFile::parse_file_from_path(&file_path)?;
-
-                let peers = torrent_file.discover_peers().await?;
-                let piece_index_and_length = torrent_file.piece_and_length();
-
-                let semaphore = Arc::new(Semaphore::new(5));
+                let piece_index_and_length = if piece.is_some() {
+                    let piece_length = {
+                        let start_byte = piece.unwrap() as u32 * torrent_file.info.piece_length;
+                        let end_byte = std::cmp::min(
+                            start_byte + torrent_file.info.piece_length,
+                            torrent_file.info.length,
+                        );
+                        end_byte - start_byte
+                    };
+                    vec![(piece.unwrap(), piece_length)]
+                } else {
+                    torrent_file.piece_and_length()
+                };
 
                 let infohash = Arc::new(hash_bytes(&serde_bencode::to_bytes(&torrent_file.info)?));
 
-                let mut tasks = JoinSet::new();
+                let (peer_request_tx, peer_request_rx) = tokio::sync::mpsc::channel(1000);
+                let (peer_response_tx, mut peer_response_rx) = tokio::sync::mpsc::channel(1000);
+
+                let peer_manager = PeerManager::new(peer_request_rx, peer_response_tx).await;
+
+                let peer_addresses = peers
+                    .iter()
+                    .map(|(ip, val)| format!("{}:{}", ip, val))
+                    .collect::<Vec<_>>();
+                peer_manager
+                    .spawn_peers(peer_addresses, infohash.clone())
+                    .await;
+
+                let total_pieces = piece_index_and_length.len();
+
                 for (piece_index, piece_length) in piece_index_and_length {
-                    let semaphore = semaphore.clone();
-                    let peer = peers[piece_index as usize % peers.len()].clone(); // Round-robin peers
-                    let infohash = infohash.clone();
-                    tasks.spawn(async move {
-                        let _permit = semaphore.acquire();
-                        download_piece_async(peer, infohash, piece_index, piece_length).await
-                    });
+                    let peer_request = PeerRequest::DowloadPiece {
+                        piece_index,
+                        piece_length,
+                    };
+                    peer_request_tx.send(peer_request).await.unwrap();
                 }
 
+                // Close the request channel so peer workers know when to exit
+                drop(peer_request_tx);
+
+                // Collect responses - we know exactly how many to expect
                 let mut pieces = Vec::new();
-                while let Some(Ok(data)) = tasks.join_next().await {
-                    // println!("Downloaded piece: {:?}", data);
-                    pieces.push(data);
+                for _ in 0..total_pieces {
+                    if let Some(data) = peer_response_rx.recv().await {
+                        println!("Received piece: {:?}", data.piece);
+                        pieces.push(data);
+                    }
                 }
 
-                fs::write(env::current_dir()?.join(output), pieces.concat()).await?;
+                // Sort pieces by index to maintain correct order
+                pieces.sort_by(|a, b| a.piece.cmp(&b.piece));
+
+                let mut contents = Vec::new();
+                for piece in pieces {
+                    contents.extend(piece.data);
+                }
+
+                fs::write(env::current_dir()?.join(output), contents).await?;
             }
             Commands::MagnetParse { magnet_link } => {
                 // magnet:?xt=urn:btih:ad42ce8109f54c99613ce38f9b4d87e70f24a165&dn=magnet1.gif&tr=http%3A%2F%2Fbittorrent-test-tracker.codecrafters.io%2Fannounce
@@ -243,51 +304,4 @@ impl Cli {
     pub fn test(&self) {
         unimplemented!("Do nonthingß");
     }
-}
-
-async fn download_piece_async(
-    peer: (Ipv4Addr, u16),
-    infohash: Arc<[u8; 20]>,
-    piece_index: u32,
-    piece_length: u32,
-) -> Vec<u8> {
-    let remote_peer = format!("{}:{}", peer.0, peer.1);
-    let mut connection = Connection::new(&remote_peer).await;
-    println!("Connected to peer: {}", remote_peer);
-    connection.handshake(&infohash.to_vec()).await;
-    println!("Handshake completed");
-    connection.wait(PeerMessage::Bitfield).await;
-    println!("Bitfield received");
-    connection.send_interested().await;
-    println!("Interested sent");
-    connection.wait(PeerMessage::Unchoke).await;
-    println!("Unchoke received");
-
-    let mut i = 0;
-    let mut piece_data_in_bytes = Vec::new();
-    while i < piece_length {
-        let block_length = min(CHUNKSIZE, piece_length - i);
-
-        connection
-            .send_request(piece_index as u32, i as u32, block_length as u32)
-            .await;
-
-        let payload = connection.wait(PeerMessage::Piece).await;
-        // Verify we got the right piece and offset
-        let received_index = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
-        let received_begin = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
-
-        if received_index != piece_index as u32 || received_begin != i as u32 {
-            panic!(
-                "Received wrong piece data: expected piece {}, offset {}, got piece {}, offset {}",
-                piece_index, i, received_index, received_begin
-            );
-        }
-
-        piece_data_in_bytes.extend_from_slice(&payload[8..]);
-
-        i += block_length;
-    }
-
-    piece_data_in_bytes
 }
