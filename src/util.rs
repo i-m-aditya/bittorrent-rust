@@ -98,7 +98,7 @@ pub fn decode_bencoded_value(encoded_value: &str, index: usize) -> (serde_json::
     }
 }
 
-pub fn decode_magnet_link(magnet_link: &str) -> (String, String) {
+pub fn decode_magnet_link(magnet_link: &str) -> (String, String, String) {
     let split_values = magnet_link
         .split('?')
         .nth(1)
@@ -113,9 +113,13 @@ pub fn decode_magnet_link(magnet_link: &str) -> (String, String) {
         .split(":")
         .nth(2)
         .unwrap();
-    let _file_name = split_values[1].split("=").nth(1).unwrap();
+    let file_name = split_values[1].split("=").nth(1).unwrap();
     let tracker = split_values[2].split("=").nth(1).unwrap();
 
     let tracker_decoded = urlencoding::decode(tracker).unwrap();
-    (tracker_decoded.to_string(), info_hash.to_string())
+    (
+        tracker_decoded.to_string(),
+        info_hash.to_string(),
+        file_name.to_string(),
+    )
 }

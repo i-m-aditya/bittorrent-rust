@@ -3,12 +3,14 @@ use std::{
     collections::HashMap,
     env,
     fmt::format,
+    io::Read,
     net::{Ipv4Addr, SocketAddrV4},
     path::Path,
     sync::{Arc, Mutex},
 };
 
 use clap::{Parser, Subcommand};
+use reqwest::Client;
 use tokio::{
     fs,
     sync::{mpsc, Semaphore},
@@ -18,6 +20,7 @@ use tokio::{
 use crate::{
     hasher::{bytes_to_hex, hash_bytes, hash_bytes_and_hex},
     parser::TorrentFile,
+    request::TrackerResponse,
     tcp::{PeerConnection, PeerManager, PeerMessage},
     util::{decode_bencoded_value, decode_magnet_link},
     CHUNKSIZE,
@@ -79,7 +82,7 @@ enum Commands {
         magnet_link: String,
     },
 
-    #[command(name = "magner_handshake")]
+    #[command(name = "magnet_handshake")]
     MagnetHandshake {
         magnet_link: String,
     },
@@ -137,7 +140,7 @@ impl Cli {
 
                 let (temp_tx, _) = tokio::sync::mpsc::channel(1000);
                 let mut connection = PeerConnection::new(url, temp_tx).await;
-                let peer_id = connection.handshake(Arc::new(infohash)).await;
+                let peer_id = connection.handshake(Arc::new(infohash), None).await;
 
                 println!("Peer ID: {}", peer_id);
             }
@@ -224,7 +227,7 @@ impl Cli {
                 // magnet:?xt=urn:btih:ad42ce8109f54c99613ce38f9b4d87e70f24a165&dn=magnet1.gif&tr=http%3A%2F%2Fbittorrent-test-tracker.codecrafters.io%2Fannounce
                 //magnet:?xt={info_hash}&dn={file_name}&tr={tracker_url}
 
-                let (tracker_decoded, info_hash) = decode_magnet_link(&magnet_link);
+                let (tracker_decoded, info_hash, _) = decode_magnet_link(&magnet_link);
                 // let (value, _) = decode_bencoded_value(tracker, 0);
                 println!("Tracker URL: {}", tracker_decoded);
                 println!("Info Hash: {}", info_hash);
@@ -232,6 +235,36 @@ impl Cli {
             Commands::MagnetHandshake { magnet_link } => {
                 // magnet:?xt=urn:btih:ad42ce8109f54c99613ce38f9b4d87e70f24a165&dn=magnet1.gif&tr=http%3A%2F%2Fbittorrent-test-tracker.codecrafters.io%2Fannounce
                 //magnet:?xt={info_hash}&dn={file_name}&tr={tracker_url}
+                let (tracker_url, info_hash, file_name) = decode_magnet_link(&magnet_link);
+
+                let info_hash: [u8; 20] = info_hash
+                    .as_bytes()
+                    .try_into()
+                    .expect("Info hash must be 20 bytes");
+
+                let torrent_file = TorrentFile::parse_file_from_path(&file_name).unwrap();
+                println!("annoce: {}", torrent_file.announce);
+
+                let client = Client::new();
+
+                let req = client.get(&tracker_url).build().unwrap();
+                let response = client.execute(req).await?.bytes().await?;
+
+                let tracker_response = serde_bencode::from_bytes::<TrackerResponse>(&response)?;
+
+                let mut peers = Vec::<(Ipv4Addr, u16)>::new();
+                for peer in tracker_response.peers.chunks(6) {
+                    let mut ip = [0u8; 4];
+                    ip.copy_from_slice(&peer[..4]);
+                    let port = u16::from_be_bytes([peer[4], peer[5]]);
+                    peers.push((Ipv4Addr::from(ip), port));
+                }
+                let peer_address = format!("{}:{}", peers[0].0, peers[0].1);
+                let (temp_tx, _) = tokio::sync::mpsc::channel(1000);
+                let mut connection = PeerConnection::new(peer_address, temp_tx).await;
+                let peer_id = connection.handshake(Arc::new(info_hash), Some(true)).await;
+
+                println!("Peer ID: {}", peer_id);
             }
         }
 

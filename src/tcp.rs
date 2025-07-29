@@ -56,7 +56,7 @@ impl PeerConnection {
 
     // pub async fn temp(peer_address: String)
     pub async fn establish_connection(&mut self, infohash: Arc<[u8; 20]>) {
-        self.handshake(infohash).await;
+        self.handshake(infohash, None).await;
         self.wait(PeerMessage::Bitfield).await;
         self.send_interested().await;
         self.wait(PeerMessage::Unchoke).await;
@@ -98,7 +98,7 @@ impl PeerConnection {
             })
             .await;
     }
-    pub async fn handshake(&mut self, infohash: Arc<[u8; 20]>) -> String {
+    pub async fn handshake(&mut self, infohash: Arc<[u8; 20]>, extension: Option<bool>) -> String {
         // Construct a message
         let mut message = vec![19];
         message.extend(b"BitTorrent protocol"); // 19 bytes
