@@ -19,7 +19,7 @@ use crate::{
     hasher::{bytes_to_hex, hash_bytes, hash_bytes_and_hex},
     parser::TorrentFile,
     tcp::{PeerConnection, PeerManager, PeerMessage},
-    util::decode_bencoded_value,
+    util::{decode_bencoded_value, decode_magnet_link},
     CHUNKSIZE,
 };
 
@@ -76,6 +76,11 @@ enum Commands {
 
     #[command(name = "magnet_parse")]
     MagnetParse {
+        magnet_link: String,
+    },
+
+    #[command(name = "magner_handshake")]
+    MagnetHandshake {
         magnet_link: String,
     },
 }
@@ -136,61 +141,7 @@ impl Cli {
 
                 println!("Peer ID: {}", peer_id);
             }
-            // Commands::DownloadPiece {
-            //     output,
-            //     file_path,
-            //     piece,
-            //     ..
-            // } => {
-            //     // println!("Download Piece Args: {:?}", download_piece_args);
 
-            //     let torrent_file = TorrentFile::parse_file_from_path(&file_path)?;
-
-            //     let peers = torrent_file.discover_peers().await?;
-
-            //     let remote_peer = format!("{}:{}", peers[0].0, peers[0].1);
-
-            //     // println!("Peer1 : {}", peer1);
-            //     let infohash = Arc::new(hash_bytes(&serde_bencode::to_bytes(&torrent_file.info)?));
-            //     let (temp_tx, temp_rx) = tokio::sync::mpsc::unbounded_channel();
-            //     let mut connection = PeerConnection::new(remote_peer, temp_tx).await;
-
-            //     let _ = connection.handshake(infohash.clone()).await;
-
-            //     connection.wait(PeerMessage::Bitfield).await;
-            //     connection.send_interested().await;
-            //     connection.wait(PeerMessage::Unchoke).await;
-
-            //     let piece_index = piece;
-            //     let piece_length = torrent_file.info.piece_length;
-
-            //     println!(
-            //         "Piece index: {} ; Piece length: {}",
-            //         piece_index, piece_length
-            //     );
-
-            //     let piece_index = piece;
-            //     let total_length = torrent_file.info.length;
-            //     let standard_piece_length = torrent_file.info.piece_length;
-
-            //     // Calculate the actual length of this specific piece
-            //     let piece_length = {
-            //         let start_byte = piece_index as u32 * standard_piece_length;
-            //         let end_byte = std::cmp::min(start_byte + standard_piece_length, total_length);
-            //         end_byte - start_byte
-            //     };
-
-            //     let piece_data = connection
-            //         .download_and_respond_piece(piece_index as u32, piece_length)
-            //         .await;
-
-            //     fs::write(
-            //         env::current_dir()?.join(output.clone().unwrap()),
-            //         piece_data,
-            //     )
-            //     .await?;
-            //     println!("Piece {} downloaded to {}.", piece_index, output.unwrap());
-            // }
             Commands::Download { metadata } | Commands::DownloadPiece { metadata } => {
                 let DownloadMetadata {
                     output,
@@ -273,28 +224,14 @@ impl Cli {
                 // magnet:?xt=urn:btih:ad42ce8109f54c99613ce38f9b4d87e70f24a165&dn=magnet1.gif&tr=http%3A%2F%2Fbittorrent-test-tracker.codecrafters.io%2Fannounce
                 //magnet:?xt={info_hash}&dn={file_name}&tr={tracker_url}
 
-                let split_values = magnet_link
-                    .split('?')
-                    .nth(1)
-                    .unwrap()
-                    .split('&')
-                    .collect::<Vec<_>>();
-
-                let info_hash = split_values[0]
-                    .split("=")
-                    .nth(1)
-                    .unwrap()
-                    .split(":")
-                    .nth(2)
-                    .unwrap();
-                let _file_name = split_values[1].split("=").nth(1).unwrap();
-                let tracker = split_values[2].split("=").nth(1).unwrap();
-
-                let tracker_decoded = urlencoding::decode(tracker).unwrap();
-
+                let (tracker_decoded, info_hash) = decode_magnet_link(&magnet_link);
                 // let (value, _) = decode_bencoded_value(tracker, 0);
                 println!("Tracker URL: {}", tracker_decoded);
                 println!("Info Hash: {}", info_hash);
+            }
+            Commands::MagnetHandshake { magnet_link } => {
+                // magnet:?xt=urn:btih:ad42ce8109f54c99613ce38f9b4d87e70f24a165&dn=magnet1.gif&tr=http%3A%2F%2Fbittorrent-test-tracker.codecrafters.io%2Fannounce
+                //magnet:?xt={info_hash}&dn={file_name}&tr={tracker_url}
             }
         }
 

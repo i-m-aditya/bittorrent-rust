@@ -97,3 +97,25 @@ pub fn decode_bencoded_value(encoded_value: &str, index: usize) -> (serde_json::
         panic!("Not implemented")
     }
 }
+
+pub fn decode_magnet_link(magnet_link: &str) -> (String, String) {
+    let split_values = magnet_link
+        .split('?')
+        .nth(1)
+        .unwrap()
+        .split('&')
+        .collect::<Vec<_>>();
+
+    let info_hash = split_values[0]
+        .split("=")
+        .nth(1)
+        .unwrap()
+        .split(":")
+        .nth(2)
+        .unwrap();
+    let _file_name = split_values[1].split("=").nth(1).unwrap();
+    let tracker = split_values[2].split("=").nth(1).unwrap();
+
+    let tracker_decoded = urlencoding::decode(tracker).unwrap();
+    (tracker_decoded.to_string(), info_hash.to_string())
+}
